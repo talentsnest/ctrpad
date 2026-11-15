@@ -1118,6 +1118,7 @@ int Platform_InputInit(void)
 
 	SDL_AddGamepadMappingsFromFile("gamecontrollerdb.txt");
 	NativeInput_OpenKnownControllers();
+	NativeNetpad_Init();
 
 	s_inputInitialized = 1;
 	return 1;
@@ -1126,6 +1127,8 @@ int Platform_InputInit(void)
 void Platform_InputShutdown(void)
 {
 	s32 slot;
+
+	NativeNetpad_Shutdown();
 
 	for (slot = 0; slot < NATIVE_INPUT_MAX_CONTROLLERS; slot++)
 	{
@@ -1161,6 +1164,7 @@ void Platform_InputUpdate(void)
 	{
 		return;
 	}
+	NativeNetpad_Poll();
 	NativeInput_CloseDisconnectedControllers();
 
 	if (s_installedSnapshotsActive != 0)
@@ -1963,6 +1967,144 @@ int Platform_InputRunSelfTest(void)
 	printf("[CTR Input] self-test passed: metadata-key=%d legacy-enter=%d migration-enter=%d live-start=retail tap-latch=shift+right until-retail-poll aliases=17 remap+duplicate+reset=passed held=shift+d+r alias-tap=shift+d mouse=gas+brake+item+l1+r1 primary-share=keyboard+mouse+touch+gamepad virtual-gamepad=buttons+axes+rumble+hotplug stale-reclaim=player1 multiplayer=preserved\n",
 	       SDL_SCANCODE_A, SDL_SCANCODE_RETURN, SDL_SCANCODE_RETURN);
 	return 0;
+}
+
+#if NATIVE_NETPAD_ENABLED
+internal void NativeInput_NetpadSend(int fd, s32 port, s32 device, s32 index, s32 id, s16 state)
+{
+	struct sockaddr_in addr;
+	u8 msg[NATIVE_NETPAD_MESSAGE_BYTES];
+	s32 zero = 0;
+
+	memset(msg, 0, sizeof(msg));
+	memcpy(msg + 0, &zero, 4);
+	memcpy(msg + 4, &device, 4);
+	memcpy(msg + 8, &index, 4);
+	memcpy(msg + 12, &id, 4);
+	memcpy(msg + 16, &state, 2);
+	memset(&addr, 0, sizeof(addr));
+	addr.sin_family = AF_INET;
+	addr.sin_port = htons((u16)port);
+	addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	sendto(fd, msg, sizeof(msg), 0, (struct sockaddr *)&addr, sizeof(addr));
+}
+#endif
+
+// Phones as pads: datagrams in RetroArch's Network RetroPad format must reach the retail pad bus
+// through SDL virtual gamepads, players 1-3 on pad slots 1-3, and releases must clear.
+int Platform_InputRunNetpadSelfTest(void)
+{
+#if NATIVE_NETPAD_ENABLED
+	const s32 base = 56500;
+	const char *failure = NULL;
+	s32 savedPadComm = g_padCommEnable;
+	int sender;
+	u16 buttons;
+
+	if (SDL_InitSubSystem(SDL_INIT_GAMEPAD) == 0)
+	{
+		fprintf(stderr, "[CTR Netpad] self-test failed: SDL gamepad init: %s\n", SDL_GetError());
+		return 1;
+	}
+	memset(s_controllers, 0, sizeof(s_controllers));
+	for (s32 slot = 0; slot < NATIVE_INPUT_MAX_CONTROLLERS; slot++)
+	{
+		s_controllers[slot].instanceId = -1;
+		s_controllerToSlotMapping[slot] = -1;
+		NativeInput_ResetSnapshot(slot);
+	}
+	NativeInput_DefaultMappings();
+	s_keyboardState = SDL_GetKeyboardState(NULL);
+	s_inputInitialized = 1;
+	g_padCommEnable = 1;
+
+	NativeNetpad_Open(base);
+	sender = socket(AF_INET, SOCK_DGRAM, 0);
+	if ((s_netpadActive == 0) || (sender < 0))
+	{
+		failure = "open loopback ports";
+		goto CLEANUP;
+	}
+
+	// player 1 presses Cross (RetroPad B), player 3 presses Up and pushes the stick fully left
+	NativeInput_NetpadSend(sender, base + 0, NATIVE_NETPAD_DEVICE_JOYPAD, 0, 0, 1);
+	NativeInput_NetpadSend(sender, base + 2, NATIVE_NETPAD_DEVICE_JOYPAD, 0, 4, 1);
+	NativeInput_NetpadSend(sender, base + 2, NATIVE_NETPAD_DEVICE_ANALOG, 0, 0, -32767);
+	NativeInput_NetpadSend(sender, base + 2, NATIVE_NETPAD_DEVICE_JOYPAD, 0, 13, 1); // R2 = trigger axis
+	SDL_Delay(30);
+	Platform_InputUpdate();
+	Platform_InputUpdate();
+
+	for (s32 p = 0; p < 3; p++)
+	{
+		if ((s_controllers[p].controller == NULL) || (s_controllers[p].instanceId != s_netpadPlayers[p].instanceId))
+		{
+			failure = "players 1-3 own pad slots 1-3 in order";
+			goto CLEANUP;
+		}
+	}
+	if (s_controllers[3].controller != NULL)
+	{
+		failure = "no phantom fourth pad";
+		goto CLEANUP;
+	}
+	if (!NativeInput_UseMultitapBus())
+	{
+		failure = "three pads use the multitap bus";
+		goto CLEANUP;
+	}
+	buttons = NativeInput_GetSnapshotButtons(&s_controllers[0].snapshot);
+	if ((buttons & 0x4000) != 0)
+	{
+		failure = "player 1 Cross reaches the pad bus";
+		goto CLEANUP;
+	}
+	buttons = NativeInput_GetSnapshotButtons(&s_controllers[2].snapshot);
+	if (((buttons & 0x10) != 0) || ((buttons & 0x200) != 0) || (s_controllers[2].snapshot.analog[2] > 8))
+	{
+		failure = "player 3 Up, R2 and left stick reach the pad bus";
+		goto CLEANUP;
+	}
+	if ((NativeInput_GetSnapshotButtons(&s_controllers[1].snapshot) & 0x4000) == 0)
+	{
+		failure = "player 2 stays idle";
+		goto CLEANUP;
+	}
+
+	NativeInput_NetpadSend(sender, base + 0, NATIVE_NETPAD_DEVICE_JOYPAD, 0, 0, 0);
+	SDL_Delay(30);
+	Platform_InputUpdate();
+	if ((NativeInput_GetSnapshotButtons(&s_controllers[0].snapshot) & 0x4000) == 0)
+	{
+		failure = "player 1 release clears Cross";
+		goto CLEANUP;
+	}
+
+CLEANUP:
+	if (sender >= 0)
+	{
+		close(sender);
+	}
+	NativeNetpad_Shutdown();
+	for (s32 slot = 0; slot < NATIVE_INPUT_MAX_CONTROLLERS; slot++)
+	{
+		NativeInput_CloseController(slot);
+	}
+	s_inputInitialized = 0;
+	g_padCommEnable = savedPadComm;
+	SDL_QuitSubSystem(SDL_INIT_GAMEPAD);
+
+	if (failure != NULL)
+	{
+		fprintf(stderr, "[CTR Netpad] self-test failed: %s\n", failure);
+		return 1;
+	}
+	printf("[CTR Netpad] self-test passed: retropad-udp=20-byte players=1-3 slots=1-3 multitap=on cross+up+r2+stick=bus release=cleared\n");
+	return 0;
+#else
+	printf("[CTR Netpad] self-test passed: disabled on this platform\n");
+	return 0;
+#endif
 }
 
 int Platform_InputGetStateSize(void)

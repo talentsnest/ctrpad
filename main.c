@@ -66,6 +66,7 @@
 #include "platform/native_gpu.c"
 #include "platform/native_gte_core.c"
 #include "platform/native_glad.c"
+#include "platform/native_netpad.c"
 #include "platform/native_input.c"
 #include "platform/native_inline_c.c"
 #include "platform/native_libapi.c"
@@ -200,6 +201,11 @@ static int NativeArg_IsAssetRelocationSelfTest(const char *arg)
 static int NativeArg_IsInputSelfTest(const char *arg)
 {
 	return (arg != NULL) && (strcmp(arg, "--self-test-input") == 0);
+}
+
+static int NativeArg_IsNetpadSelfTest(const char *arg)
+{
+	return (arg != NULL) && (strcmp(arg, "--self-test-netpad") == 0);
 }
 
 static int NativeArg_IsCollisionScratchSelfTest(const char *arg)
@@ -653,6 +659,10 @@ int main(int argc, char *argv[])
 		if (NativeArg_IsInputSelfTest(argv[argIndex]))
 		{
 			return Platform_InputRunSelfTest();
+		}
+		if (NativeArg_IsNetpadSelfTest(argv[argIndex]))
+		{
+			return Platform_InputRunNetpadSelfTest();
 		}
 		if (NativeArg_IsCollisionScratchSelfTest(argv[argIndex]))
 		{

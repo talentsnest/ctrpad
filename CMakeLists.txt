@@ -431,6 +431,8 @@ if(BUILD_TESTING)
     set_tests_properties(ctr_native_asset_relocation PROPERTIES PASS_REGULAR_EXPRESSION
         "^\\[CTR AssetRelocation\\] self-test passed: first=0x07000014 duplicate=duplicate-patch target=target-out-of-range atomic=yes model=checked override=checked level=checked cache-recycle=targeted\\+range\\+all"
     )
+    add_test(NAME ctr_native_netpad COMMAND $<TARGET_FILE:ctr_native> --self-test-netpad)
+    set_tests_properties(ctr_native_netpad PROPERTIES PASS_REGULAR_EXPRESSION "\\[CTR Netpad\\] self-test passed")
     add_test(NAME ctr_native_input COMMAND $<TARGET_FILE:ctr_native> --self-test-input)
     set_tests_properties(ctr_native_input PROPERTIES PASS_REGULAR_EXPRESSION
         "^\\[CTR Input\\] self-test passed: metadata-key=4 legacy-enter=40 migration-enter=40 live-start=retail tap-latch=shift\\+right until-retail-poll aliases=17 remap\\+duplicate\\+reset=passed"

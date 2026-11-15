@@ -91,6 +91,7 @@ int Platform_InputUpgradeLegacySubmitNameSnapshots(struct PlatformInputPadSnapsh
 void Platform_InputSetSubmitNameKey(int key, int down);
 int Platform_InputGetSubmitNameKey(void);
 int Platform_InputRunSelfTest(void);
+int Platform_InputRunNetpadSelfTest(void);
 int Platform_InputGetStateSize(void);
 int Platform_InputCaptureState(void *dst, int dstSize);
 int Platform_InputRestoreState(const void *src, int srcSize);
