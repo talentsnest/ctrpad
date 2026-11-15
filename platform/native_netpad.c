@@ -128,6 +128,13 @@ internal void NativeNetpad_Apply(s32 player, const u8 *msg)
 	memcpy(&id, msg + 12, sizeof(id));
 	memcpy(&state, msg + 16, sizeof(state));
 
+	// A release for a pad that never pressed anything (the phone server releases everything when a
+	// phone leaves) must not create a phantom controller.
+	if ((s_netpadPlayers[player].joystick == NULL) && (state == 0))
+	{
+		return;
+	}
+
 	// Players attach in order (the phone server numbers them without gaps), so a lower phone
 	// never ends up on a higher pad slot because it pressed later.
 	for (s32 p = 0; p <= player; p++)
@@ -221,6 +228,9 @@ internal void NativeNetpad_Init(void)
 	{
 		basePort = atoi(portEnv);
 	}
+	// Phones are the controllers: the CTRPad window is often not frontmost (the QR page, another app),
+	// and SDL drops gamepad input for background apps by default.
+	SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
 	NativeNetpad_Open(basePort);
 #endif
 }
